@@ -88,5 +88,3 @@ saveRDS(plotData, './data_prep/Rdata/plotData.rds')
 saveRDS(sitesData, './shiny_app/sitesData.rds')
 saveRDS(data_for_plot1, './shiny_app/data_for_plot1')
 saveRDS(data_for_plot2, './shiny_app/data_for_plot2')
-
-
