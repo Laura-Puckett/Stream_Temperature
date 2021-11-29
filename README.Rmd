@@ -1,0 +1,123 @@
+---
+title: "StremTemp_code_as_markdown"
+author: "Laura Puckett"
+date: "11/29/2021"
+output: html_document
+---
+Built with R version `r getRversion()`
+
+<h1> Part 1. Download Data <h1/>
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+<h2> Load Libraries <h2/>
+```{r Load Libraries}
+library(dataRetrieval); library(dplyr)
+```
+<h2> Define Downloading Functions <h2/>
+```{r Define Downloading Functions, eval=FALSE, message=FALSE, warning=FALSE}
+
+# function to download site metadata by state
+dl_site_data = function(state){
+  print(state)
+  sites <- whatNWISdata(stateCd = state, parameterCd="00010", siteType="ST")
+  saveRDS(sites, paste('./Rdata/sites', state, sep = '_'))
+  return(sites)
+}
+
+# function to download stream temperature data by state
+dl_temp_data = function(state, startDate, endDate){
+  print(paste(state, startDate, endDate))
+  streamtemp <- readNWISdata(stateCd = state, service="dv", startDate = startDate,
+                             endDate = endDate,parameterCd="00010", siteType="ST")
+  streamtemp = streamtemp %>%
+    dplyr::select(agency_cd, site_no, dateTime, X_00010_00003, tz_cd)
+  saveRDS(streamtemp, paste('./Rdata/streamtemp', startDate, endDate, state, sep = '_'))
+  
+  return(streamtemp)
+}
+
+```
+<h2> Download USGS Data <h2/>
+```{r Download USGS Data, eval=FALSE}
+
+startDate = '2000-01-01'
+endDate = '2021-11-01'
+states = c("OR","WA","ID")
+
+# Download Site Metadata
+for(state in states){
+  # download data or read existing file
+  if(file.exists(paste('./Rdata/sites', state, sep = '_'))){
+    state_sites = readRDS(paste('./Rdata/sites',  state, sep = '_'))
+  }else{
+    state_sites = dl_site_data(state)
+  }
+  # append data from multiple states into single dataframe
+  if(state == states[1]){
+    site_data = state_sites
+  }else{
+    site_data = rbind(site_data, state_sites)
+    saveRDS(site_data, './Rdata/site_data.rds')
+  }
+}
+
+# Download Stream Data
+for(state in states){
+  # download data or read existing file
+  if(file.exists(paste('./Rdata/streamtemp', startDate, endDate, state, sep = '_'))){
+    state_data = readRDS(paste('./Rdata/streamtemp', startDate, endDate, state, sep = '_'))
+  }else{
+    state_data = dl_temp_data(state, startDate, endDate)
+  }
+  # append data from multiple states into single dataframe
+  if(state == states[1]){
+    temp_data = state_data
+  }else{
+    temp_data = rbind(temp_data, state_data)
+    saveRDS(temp_data, './Rdata/streamtemp_data.rds')
+  }
+}
+
+```
+<h1> Part 2. Organize Data <h1/>
+
+<h2>View Site Metadata<h2/>
+```{r View Site Metadata}
+site_data = readRDS('./data_prep/Rdata/site_data.rds')
+site_data %>% head()
+
+```
+<h2>View Stream Temperature Data<h2/>
+
+```{r View Stream Temperature Data}
+stream_temp = readRDS('./data_prep/Rdata/streamtemp_data.rds')
+stream_temp %>% head()
+```
+<h2> Reformat Temperature Data <h2/>
+
+```{r}
+stream_temp_f = stream_temp %>% 
+  # convert Celsius to Fahrenheit
+  rename(tempC = X_00010_00003) %>% 
+  mutate(tempF = tempC*(9/5)+32,
+         year = lubridate::year(dateTime),
+         month = lubridate::month(dateTime),
+         month_name = lubridate::month(dateTime, label = T),
+         day = lubridate::day(dateTime),
+         # reformat dates for plot axes
+         month_day = paste0(month_name, day, sep = "-"),
+         axis_date_minimal = ifelse(day %in% c(1,15), month_day,""),
+         date_all_2021 = dateTime)
+# create a dummy column with 2021 as the year for all to easily
+# plot multiple years of data on top of each other
+lubridate::year(stream_temp_f$date_all_2021) = 2021
+
+```
+<h1> 3. Write Output Files for Shiny App <h1/>
+```{r}
+saveRDS(plotData, './data_prep/Rdata/plotData.rds')
+saveRDS(sitesData, './shiny_app/sitesData.rds')
+saveRDS(data_for_plot1, './shiny_app/data_for_plot1')
+saveRDS(data_for_plot2, './shiny_app/data_for_plot2')
+```

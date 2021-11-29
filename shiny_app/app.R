@@ -10,7 +10,7 @@ heatwave_end =  '2021-07-20'
 # --------------------------------------------------
 data_for_plot1 = readRDS('./data_for_plot1')
 data_for_plot2 = readRDS('./data_for_plot2')
-siteData = readRDS('./sitesData.rds')
+sitesData = readRDS('./sitesData.rds')
 # rivers_sub = readRDS('./rivers_sub')
 states_data = maps::map('state', regions=c('oregon', 'washington','idaho'), fill = T, plot = F)
 
@@ -51,7 +51,7 @@ server <- function(input, output) {
       addProviderTiles(providers$Stamen.TerrainBackground, options = providerTileOptions(opacity = 0.5)) %>%
       addPolygons(data = states_data, fillColor = topo.colors(10, alpha = NULL), stroke = FALSE) %>%
      #  addPolylines(data=rivers_sub, weight = 2, color = "blue", fill = F) %>%
-      addMarkers(data = siteData,
+      addMarkers(data = sitesData,
                  ~dec_long_va,
                  ~dec_lat_va, 
                  label = ~htmltools::htmlEscape(station_nm),

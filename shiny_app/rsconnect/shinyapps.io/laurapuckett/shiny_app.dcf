@@ -1,0 +1,13 @@
+name: shiny_app
+title: shiny_app
+username:
+account: laurapuckett
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 5226083
+bundleId: 5306391
+url: https://laurapuckett.shinyapps.io/shiny_app/
+when: 1638210350.60309
+lastSyncTime: 1638210350.6031
+asMultiple: FALSE
+asStatic: FALSE
