@@ -1,0 +1,324 @@
+---
+title: "Interactive USGS Stream Temperature Data App"
+author: "Laura Puckett"
+date: "11/29/2021"
+output: html_document
+---
+
+In this project, I displayed stream temperatures from USGS stations within the Pacific Northwest in an interactive app.
+
+I chose to display these data because a major heatwave struck the region in June 2021. Stream temperatures in many locations grew warmer than 68F - a critical threshold over which salmon experience great stress and are more likely to contract diseases or die. Heat-related salmon mortality was recorded in the region as a result of the 2015 and 2021 heat waves.
+
+
+- Interactive App [link](https://laurapuckett.shinyapps.io/Pacific_NW_Stream_Temperature_during_2021_Heatwave/)
+- Code Repository [link](https://github.com/Laura-Puckett/Stream_Temperature)
+
+My code for this project is shown in a reproducible example below. 
+
+<h2> Part 1. Download Data <h2/>
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+<h3> Load Libraries <h3/>
+R version:  `r getRversion()`
+```{r Load Libraries, message=FALSE, warning=FALSE}
+library(dataRetrieval); library(dplyr); library(shinyr);
+library(plotly); library(leaflet)
+
+```
+<h3> Define Downloading Functions <h3/>
+```{r Define Downloading Functions, eval=FALSE, message=FALSE, warning=FALSE}
+
+# function to download site metadata by state
+dl_site_data = function(state){
+  print(state)
+  sites <- whatNWISdata(stateCd = state, parameterCd="00010", siteType="ST")
+  saveRDS(sites, paste('./Rdata/sites', state, sep = '_'))
+  return(sites)
+}
+
+# function to download stream temperature data by state
+dl_temp_data = function(state, startDate, endDate){
+  print(paste(state, startDate, endDate))
+  streamtemp <- readNWISdata(stateCd = state, service="dv", startDate = startDate,
+                             endDate = endDate,parameterCd="00010", siteType="ST")
+  streamtemp = streamtemp %>%
+    dplyr::select(agency_cd, site_no, dateTime, X_00010_00003, tz_cd)
+  saveRDS(streamtemp, paste('./Rdata/streamtemp', startDate, endDate, state, sep = '_'))
+  
+  return(streamtemp)
+}
+
+```
+<h3> Download USGS Data <h3/>
+```{r Download USGS Data, eval=FALSE}
+
+startDate = '2000-01-01'
+endDate = '2021-11-01'
+states = c("OR","WA","ID")
+
+# Download Site Metadata
+for(state in states){
+  # download data or read existing file
+  if(file.exists(paste('./Rdata/sites', state, sep = '_'))){
+    state_sites = readRDS(paste('./Rdata/sites',  state, sep = '_'))
+  }else{
+    state_sites = dl_site_data(state)
+  }
+  # append data from multiple states into single dataframe
+  if(state == states[1]){
+    site_data = state_sites
+  }else{
+    site_data = rbind(site_data, state_sites)
+    saveRDS(site_data, './Rdata/site_data.rds')
+  }
+}
+
+# Download Stream Data
+for(state in states){
+  # download data or read existing file
+  if(file.exists(paste('./Rdata/streamtemp', startDate, endDate, state, sep = '_'))){
+    state_data = readRDS(paste('./Rdata/streamtemp', startDate, endDate, state, sep = '_'))
+  }else{
+    state_data = dl_temp_data(state, startDate, endDate)
+  }
+  # append data from multiple states into single dataframe
+  if(state == states[1]){
+    temp_data = state_data
+  }else{
+    temp_data = rbind(temp_data, state_data)
+    saveRDS(temp_data, './Rdata/streamtemp_data.rds')
+  }
+}
+
+```
+<h2> Part 2. Organize Data <h2/>
+
+<h3>View Site Metadata<h3/>
+```{r View Site Metadata}
+site_data = readRDS('./data_prep/Rdata/site_data.rds')
+site_data %>% head()
+
+```
+<h3>View Stream Temperature Data<h3/>
+
+```{r View Stream Temperature Data}
+stream_temp = readRDS('./data_prep/Rdata/streamtemp_data.rds')
+stream_temp %>% head()
+```
+<h3> Reformat Temperature Data <h3/>
+
+```{r}
+stream_temp = stream_temp %>% 
+  # convert Celsius to Fahrenheit
+  rename(tempC = X_00010_00003) %>% 
+  mutate(tempF = tempC*(9/5)+32,
+         year = lubridate::year(dateTime),
+         month = lubridate::month(dateTime),
+         month_name = lubridate::month(dateTime, label = T),
+         day = lubridate::day(dateTime),
+         # reformat dates for plot axes
+         month_day = paste0(month_name, day, sep = "-"),
+         axis_date_minimal = ifelse(day %in% c(1,15), month_day,""),
+         date_all_2021 = dateTime)
+# create a dummy column with 2021 as the year for all to easily
+# plot multiple years of data on top of each other
+lubridate::year(stream_temp$date_all_2021) = 2021
+```
+<h3> Filtering <h3/>
+
+```{r, eval = F}
+# get site_no that have sufficient 2021 data for plotting
+sites_with_enough_2021_data = stream_temp %>%
+  filter(year == 2021) %>%
+  group_by(site_no) %>%
+  dplyr::summarize(count = n()) %>%
+  filter(count > 300) %>%
+  dplyr::select(site_no)
+
+# filter sites dataset
+sites_sub = site_data %>%   
+  filter(site_no %in% sites_with_enough_2021_data$site_no) %>%
+  mutate(huc_cd = as.numeric(huc_cd)) %>%
+  filter(end_date>= "2021-08-01" & begin_date <= "2010-04-01") %>%
+  filter(count_nu > 1000) %>% # total number of records
+  filter(huc_cd >= 17000000 & huc_cd < 18000000) # Colombia River Basin hucs
+
+# filter stream temp dataset
+plotData = stream_temp %>% 
+  filter(site_no %in% sites_sub$site_no) %>%
+  filter(tempF < 140) # remove really high outlier data for one site
+
+# select columns of interest in both datasets
+plotData = plotData %>% 
+  dplyr::select(site_no, dateTime, tempF, year, month,
+                month_day, axis_date_minimal, date_all_2021)
+
+sitesData = sites_sub %>%
+  dplyr::select(site_no, station_nm, dec_lat_va, dec_long_va)
+
+# Filter for the data that will be used in each figure on the app
+data_for_plot1 = plotData %>%
+  filter(dateTime < '2021-09-30' & dateTime > '2021-04-01') %>%
+  inner_join(sitesData %>% dplyr::select(site_no, station_nm)) %>%
+  unique() %>%
+  group_by(site_no)
+
+data_for_plot2 = plotData %>%
+  filter(month >= 4 & month <= 9) %>%
+  mutate(color_group = "other years",
+         color_group = ifelse(year == 2021, 2021, color_group),
+         color_group = ifelse(year == 2015, 2015, color_group)) %>%
+  inner_join(sitesData %>% dplyr::select(site_no, station_nm)) %>%
+  unique() %>%
+  group_by(year)
+
+```
+<h3> Write Output Files for Shiny App <h3/>
+```{r, eval = F}
+saveRDS(plotData, './data_prep/Rdata/plotData.rds')
+saveRDS(sitesData, './shiny_app/sitesData.rds')
+saveRDS(data_for_plot1, './shiny_app/data_for_plot1')
+saveRDS(data_for_plot2, './shiny_app/data_for_plot2')
+```
+
+<h2> Part 3. The Shiny app <h2/>
+<h3> Server Function <h3/>
+```{r, eval = F}
+server <- function(input, output) {
+  # Generate Interactive Map
+  output$map <- renderLeaflet(
+    map <- leaflet() %>% 
+      setView(lng = -117.64, lat = 45.88, zoom = 5.4) %>%
+      addProviderTiles(providers$Stamen.TerrainBackground, options = providerTileOptions(opacity = 0.5)) %>%
+      addPolygons(data = states_data, fillColor = topo.colors(10, alpha = NULL),
+                  stroke = FALSE) %>%
+      addMarkers(data = sitesData,
+                 ~dec_long_va,
+                 ~dec_lat_va, 
+                 label = ~htmltools::htmlEscape(station_nm),
+                 layerId = ~site_no))
+  
+  observeEvent(input$map_marker_click, { 
+    # save choice from user input in reactive variable
+    choice <- input$map_marker_click[1]
+  }
+  )
+  
+  output$plot1 <- renderPlotly(
+    plot1 <- p_1 %>%
+      add_trace(data = data_for_plot1 %>%
+                  filter(site_no == ifelse(
+                    is.null(input$map_marker_click[1]),
+                    14169000,
+                    input$map_marker_click[1])),
+                type = "scatter",
+                x = ~dateTime,
+                y = ~tempF,
+                mode = 'lines',
+                name = "Selected Site",
+                line = list(width=2.5, color="black"),
+                opacity = 1,
+                showlegend = T)
+  )
+  
+  # Generate Plot 2
+  output$plot2 <- renderPlotly(
+    plot2 <- plot_ly() %>% 
+      layout(title = "",
+             yaxis=list(title='Stream Temperature [F]'),
+             xaxis = list(title = "",
+                          type = 'date',
+                          tickformat = " %B")) %>%
+      add_trace(data = data_for_plot2 %>%
+                  filter(year == 2021)  %>%
+                  filter(site_no == ifelse(is.null(choice),14169000,choice)),
+                name = "2021",
+                type = "scatter",
+                x = ~date_all_2021,
+                y = ~tempF,
+                mode = 'lines',
+                line = list(width=2.5, color="black",
+                            size = 2.5)) %>%
+      add_trace(data = data_for_plot2 %>%
+                  filter(year == 2015)  %>%
+                  filter(site_no == ifelse(is.null(choice),14169000,choice)),
+                type = "scatter",
+                x = ~date_all_2021,
+                name = "2015",s
+                y = ~tempF,
+                mode = 'lines',
+                line = list(width=2.5, color="gray"),
+                size = 2.5) %>% 
+      add_trace(data = data_for_plot2 %>%
+                  filter(color_group == "other years")  %>%
+                  filter(site_no == ifelse(is.null(choice),14169000,choice)),
+                type = "scatter",
+                x = ~date_all_2021,
+                y = ~tempF,
+                mode = 'lines',
+                yaxis="y1",
+                name = "other years",
+                color =~color_group,
+                line=list(color='#1f77b4'),
+                opacity=0.4,
+                showlegend = T) 
+  )
+}
+```
+
+<h3> User Interface Function <h3/>
+```{r, eval = F}
+ui <- fluidPage(
+  headerPanel('Stream Temperature in the Pacific Northwest'),
+  mainPanel(h3("Choose a USGS station from the map. "),
+            leafletOutput(outputId = "map"),
+            h3(""),
+            tabsetPanel(type = "tabs",
+                        tabPanel("All Sites, 2021",  plotlyOutput('plot1')),
+                        tabPanel("Selected Site, 2000-2021",  plotlyOutput('plot2'))
+            )
+  )
+)
+```
+<h3> App Setup <h3/>
+```{r, eval = F}
+heatwave_start = '2021-06-10'
+heatwave_end =  '2021-07-20'
+
+data_for_plot1 = readRDS('./shiny_app/data_for_plot1')
+data_for_plot2 = readRDS('./shiny_app/data_for_plot2')
+sitesData = readRDS('./shiny_app/sitesData.rds')
+states_data = maps::map('state', regions=c('oregon', 'washington','idaho'), fill = T, plot = F)
+
+# Initialize plot 1 here (and not in server function) because it only needs to be run once.
+p_1 <- plot_ly() %>% 
+  layout(# title = "Stream Temperature for All Sites in 2021",
+    yaxis=list(title='Stream Temperature [F]'),
+    xaxis = list(title = '',
+                 type = 'date',
+                 tickformat = " %B<br>%Y"),
+    shapes = list(list(type = "rect",
+                       fillcolor = "red", line = list(color = "red"), opacity = 0.2,
+                       y0 = 35, y1 = 85, x0 = heatwave_start, x1 = heatwave_end),
+                  list(type = "line", x0 = "2021-04-01", x1 = '2021-09-30',
+                       y0 = 68, y1 = 68,
+                       line = list(color = "black", dash = "dash")))) %>%
+  add_text(x = c("2021-07-01", "2021-05-02"), y = c(38, 71),
+           text = c("2021 Heatwave","Dangerous Temperature \n for Salmon"),
+           showlegend = F) %>%
+  add_trace(data = data_for_plot1,
+            type = "scatter",
+            x = ~dateTime,
+            y = ~tempF,
+            mode = 'lines',
+            name = ~site_no,
+            line=list(width=0.8),
+            opacity=.5,
+            showlegend = F) 
+
+```
+<h3> Run the App <h3/>
+```{r, eval = F}
+shinyApp(ui = ui, server = server)
+```
